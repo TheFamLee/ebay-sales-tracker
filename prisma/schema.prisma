@@ -1,0 +1,193 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  passwordHash  String
+  name          String?
+  role          String    @default("USER") // USER or ADMIN
+
+  // 2FA fields
+  twoFactorEnabled Boolean @default(false)
+  twoFactorSecret  String?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  // Relations
+  sales         Sale[]
+  listings      Listing[]
+  notifications Notification[]
+
+  // eBay Auth
+  ebayUserId    String?
+  ebayToken     String?
+  ebayRefreshToken String?
+  ebayTokenExpiry DateTime?
+}
+
+model Item {
+  id          String   @id @default(cuid())
+  itemNumber  String   @unique
+  description String
+  category    String?
+
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  sales       Sale[]
+  listings    Listing[]
+  priceHistory PriceHistory[]
+}
+
+model Sale {
+  id            String   @id @default(cuid())
+
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+
+  itemId        String
+  item          Item     @relation(fields: [itemId], references: [id])
+
+  listedDate    DateTime?
+  saleDate      DateTime
+  listedPrice   Float
+  salePrice     Float
+  shippingCost  Float    @default(0)
+  suppliesCost  Float    @default(0)
+  netProfit     Float
+
+  offerStartDate DateTime?
+  offerExpirationDate DateTime?
+
+  ebayOrderId   String?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+  @@index([itemId])
+  @@index([saleDate])
+}
+
+model Listing {
+  id            String   @id @default(cuid())
+
+  userId        String
+  user          User     @relation(fields: [userId], references: [id])
+
+  itemId        String
+  item          Item     @relation(fields: [itemId], references: [id])
+
+  ebayListingId String?  @unique
+  ebayUrl       String?
+
+  currentPrice  Float
+  listedDate    DateTime
+  status        String   @default("ACTIVE") // ACTIVE, SOLD, ENDED
+
+  views         Int?
+  watchers      Int?
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([userId])
+  @@index([itemId])
+  @@index([status])
+}
+
+model CompetitorPrice {
+  id            String   @id @default(cuid())
+
+  itemNumber    String
+  source        String   // EBAY, AMAZON
+
+  price         Float
+  condition     String?
+  url           String?
+  title         String?
+
+  scrapedAt     DateTime @default(now())
+
+  @@index([itemNumber])
+  @@index([scrapedAt])
+}
+
+model PriceHistory {
+  id        String   @id @default(cuid())
+
+  itemId    String
+  item      Item     @relation(fields: [itemId], references: [id])
+
+  price     Float
+  priceType String   // LISTED, SOLD, COMPETITOR
+  source    String?  // EBAY, AMAZON, USER
+
+  date      DateTime @default(now())
+
+  @@index([itemId])
+  @@index([date])
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+
+  type      String   // UNSOLD_ITEM, PRICE_CHANGE, SYSTEM
+  title     String
+  message   String
+
+  read      Boolean  @default(false)
+
+  createdAt DateTime @default(now())
+
+  @@index([userId])
+  @@index([read])
+}
+
+// Items to Sell - inventory not yet listed
+model InventoryItem {
+  id              String   @id @default(cuid())
+
+  itemNumber      String?
+  description     String
+  minimumPrice    Float?
+  cost            Float?
+  status          String   @default("AVAILABLE") // AVAILABLE, LISTED, SOLD
+
+  dateAdded       DateTime @default(now())
+
+  userId          String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+}
+
+// USB Deposit tracking
+model Deposit {
+  id          String   @id @default(cuid())
+
+  soldDate    DateTime
+  description String
+  total       Float
+  netProfit   Float?
+
+  userId      String?
+
+  createdAt   DateTime @default(now())
+
+  @@index([soldDate])
+}
