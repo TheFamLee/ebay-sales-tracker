@@ -1,8 +1,7 @@
 "use client"
 
 import { Suspense } from "react"
-import { useState } from "react"
-import { signIn } from "next-auth/react"
+import { useState, useEffect } from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -17,11 +16,17 @@ function LoginForm() {
 
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
-  const [totpCode, setTotpCode] = useState("")
   const [error, setError] = useState("")
   const [loading, setLoading] = useState(false)
-  const [needs2FA, setNeeds2FA] = useState(false)
-  const [userId, setUserId] = useState("")
+  const [csrfToken, setCsrfToken] = useState("")
+
+  // Fetch CSRF token on mount
+  useEffect(() => {
+    fetch("/api/auth/csrf")
+      .then((res) => res.json())
+      .then((data) => setCsrfToken(data.csrfToken))
+      .catch(console.error)
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -29,141 +34,43 @@ function LoginForm() {
     setLoading(true)
 
     try {
-      const result = await signIn("credentials", {
-        email,
-        password,
-        totpCode: needs2FA ? totpCode : undefined,
-        redirect: false,
+      // Use fetch directly instead of signIn
+      const res = await fetch("/api/auth/callback/credentials", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams({
+          email,
+          password,
+          csrfToken,
+          callbackUrl,
+          json: "true",
+        }),
+        redirect: "manual",
       })
 
-      if (!result) {
-        setError("An error occurred during login")
-        setLoading(false)
-        return
+      // Check if login was successful
+      if (res.type === "opaqueredirect" || res.status === 302 || res.status === 200) {
+        // Check the session to see if we're logged in
+        const sessionRes = await fetch("/api/auth/session")
+        const session = await sessionRes.json()
+
+        if (session?.user) {
+          router.push(callbackUrl)
+          router.refresh()
+          return
+        }
       }
 
-      if (result.error) {
-        setError("Invalid email or password")
-        setLoading(false)
-        return
-      }
-
-      if (!result.ok) {
-        setError("Login failed. Please try again.")
-        setLoading(false)
-        return
-      }
-
-      // Login successful - check for 2FA
-      const sessionRes = await fetch("/api/auth/session")
-      const session = await sessionRes.json()
-
-      if (session?.user?.twoFactorEnabled && !session?.user?.twoFactorVerified) {
-        setNeeds2FA(true)
-        setUserId(session.user.id)
-        setLoading(false)
-        return
-      }
-
-      router.push(callbackUrl)
-      router.refresh()
+      // If we get here, login failed
+      setError("Invalid email or password")
+      setLoading(false)
     } catch (err) {
       console.error("Login error:", err)
       setError("An error occurred during login")
       setLoading(false)
     }
-  }
-
-  const handle2FAVerification = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setLoading(true)
-
-    try {
-      const response = await fetch("/api/auth/2fa/validate", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId, code: totpCode }),
-      })
-
-      const data = await response.json()
-
-      if (!response.ok) {
-        setError(data.error || "Invalid verification code")
-        setLoading(false)
-        return
-      }
-
-      const updateResponse = await fetch("/api/auth/session", {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ twoFactorVerified: true }),
-      })
-
-      if (updateResponse.ok) {
-        router.push(callbackUrl)
-        router.refresh()
-      }
-    } catch {
-      setError("Verification failed")
-      setLoading(false)
-    }
-  }
-
-  if (needs2FA) {
-    return (
-      <Card className="w-full max-w-md">
-        <CardHeader className="space-y-1">
-          <CardTitle className="text-2xl font-bold text-center">
-            Two-Factor Authentication
-          </CardTitle>
-          <CardDescription className="text-center">
-            Enter the 6-digit code from your authenticator app
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <form onSubmit={handle2FAVerification} className="space-y-4">
-            {error && (
-              <Alert variant="destructive">
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-
-            <div className="space-y-2">
-              <Label htmlFor="totpCode">Verification Code</Label>
-              <Input
-                id="totpCode"
-                type="text"
-                inputMode="numeric"
-                pattern="[0-9]*"
-                maxLength={6}
-                placeholder="000000"
-                value={totpCode}
-                onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, ""))}
-                className="text-center text-2xl tracking-widest"
-                required
-              />
-            </div>
-
-            <Button type="submit" className="w-full" disabled={loading || totpCode.length !== 6}>
-              {loading ? "Verifying..." : "Verify"}
-            </Button>
-
-            <Button
-              type="button"
-              variant="ghost"
-              className="w-full"
-              onClick={() => {
-                setNeeds2FA(false)
-                setTotpCode("")
-              }}
-            >
-              Back to Login
-            </Button>
-          </form>
-        </CardContent>
-      </Card>
-    )
   }
 
   return (
@@ -207,7 +114,7 @@ function LoginForm() {
             />
           </div>
 
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button type="submit" className="w-full" disabled={loading || !csrfToken}>
             {loading ? "Signing in..." : "Sign In"}
           </Button>
         </form>
