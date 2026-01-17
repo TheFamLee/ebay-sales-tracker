@@ -84,4 +84,6 @@ export const authConfig: NextAuthConfig = {
     maxAge: 30 * 24 * 60 * 60, // 30 days
   },
   trustHost: true,
+  debug: process.env.NODE_ENV === "development",
+  secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
 }
