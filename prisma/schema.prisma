@@ -26,6 +26,10 @@ model User {
   listings      Listing[]
   notifications Notification[]
 
+  // Invite codes
+  createdInvites InviteCode[] @relation("CreatedInvites")
+  usedInvite     InviteCode?  @relation("UsedInvite")
+
   // eBay Auth
   ebayUserId    String?
   ebayToken     String?
@@ -190,4 +194,24 @@ model Deposit {
   createdAt   DateTime @default(now())
 
   @@index([soldDate])
+}
+
+// Invite codes for registration
+model InviteCode {
+  id          String   @id @default(cuid())
+  code        String   @unique
+
+  createdById String
+  createdBy   User     @relation("CreatedInvites", fields: [createdById], references: [id])
+
+  usedById    String?  @unique
+  usedBy      User?    @relation("UsedInvite", fields: [usedById], references: [id])
+
+  maxUses     Int      @default(1)
+  uses        Int      @default(0)
+
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  @@index([code])
 }
