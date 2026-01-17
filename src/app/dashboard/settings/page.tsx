@@ -1,14 +1,16 @@
 "use client"
 
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, Suspense } from "react"
 import { useSession } from "next-auth/react"
+import { useSearchParams } from "next/navigation"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import { Separator } from "@/components/ui/separator"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
-import { Shield, Link2, User, Bell, Ticket, Copy, Trash2, Loader2 } from "lucide-react"
+import { Alert, AlertDescription } from "@/components/ui/alert"
+import { Shield, Link2, User, Bell, Ticket, Copy, Trash2, Loader2, RefreshCw, CheckCircle, XCircle } from "lucide-react"
 import Link from "next/link"
 
 interface InviteCode {
@@ -21,14 +23,68 @@ interface InviteCode {
   usedBy: { email: string; name: string | null } | null
 }
 
+interface EbayStatus {
+  configured: boolean
+  connected: boolean
+  tokenExpired: boolean
+  username: string | null
+  connectedAt: string | null
+}
+
+interface SyncStatus {
+  salesCount: number
+  listingsCount: number
+  payoutsCount: number
+  lastSync: string | null
+}
+
+// Separate component that uses useSearchParams
+function EbayCallbackAlerts() {
+  const searchParams = useSearchParams()
+  const ebayConnected = searchParams.get("ebay_connected")
+  const ebayError = searchParams.get("ebay_error")
+
+  if (!ebayConnected && !ebayError) return null
+
+  return (
+    <>
+      {ebayConnected && (
+        <Alert className="bg-green-50 border-green-200">
+          <CheckCircle className="h-4 w-4 text-green-600" />
+          <AlertDescription className="text-green-800">
+            Successfully connected to eBay! You can now sync your sales data.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {ebayError && (
+        <Alert variant="destructive">
+          <XCircle className="h-4 w-4" />
+          <AlertDescription>
+            eBay connection failed: {decodeURIComponent(ebayError)}
+          </AlertDescription>
+        </Alert>
+      )}
+    </>
+  )
+}
+
 export default function SettingsPage() {
   const { data: session } = useSession()
+
   const [invites, setInvites] = useState<InviteCode[]>([])
   const [loadingInvites, setLoadingInvites] = useState(true)
   const [creatingInvite, setCreatingInvite] = useState(false)
   const [maxUses, setMaxUses] = useState(1)
   const [expiresInDays, setExpiresInDays] = useState<number | undefined>(undefined)
   const [copiedCode, setCopiedCode] = useState<string | null>(null)
+
+  // eBay state
+  const [ebayStatus, setEbayStatus] = useState<EbayStatus | null>(null)
+  const [loadingEbay, setLoadingEbay] = useState(true)
+  const [syncing, setSyncing] = useState(false)
+  const [syncStatus, setSyncStatus] = useState<SyncStatus | null>(null)
+  const [disconnecting, setDisconnecting] = useState(false)
 
   const fetchInvites = useCallback(async () => {
     try {
@@ -44,9 +100,28 @@ export default function SettingsPage() {
     }
   }, [])
 
+  const fetchEbayStatus = useCallback(async () => {
+    try {
+      const response = await fetch("/api/ebay/status")
+      const data = await response.json()
+      setEbayStatus(data)
+
+      if (data.connected) {
+        const syncResponse = await fetch("/api/ebay/sync")
+        const syncData = await syncResponse.json()
+        setSyncStatus(syncData)
+      }
+    } catch (error) {
+      console.error("Failed to fetch eBay status:", error)
+    } finally {
+      setLoadingEbay(false)
+    }
+  }, [])
+
   useEffect(() => {
     fetchInvites()
-  }, [fetchInvites])
+    fetchEbayStatus()
+  }, [fetchInvites, fetchEbayStatus])
 
   const createInvite = async () => {
     setCreatingInvite(true)
@@ -85,6 +160,46 @@ export default function SettingsPage() {
     setTimeout(() => setCopiedCode(null), 2000)
   }
 
+  const connectEbay = () => {
+    window.location.href = "/api/ebay/connect"
+  }
+
+  const disconnectEbay = async () => {
+    setDisconnecting(true)
+    try {
+      await fetch("/api/ebay/disconnect", { method: "POST" })
+      setEbayStatus({ ...ebayStatus!, connected: false, username: null })
+      setSyncStatus(null)
+    } catch (error) {
+      console.error("Failed to disconnect eBay:", error)
+    } finally {
+      setDisconnecting(false)
+    }
+  }
+
+  const syncEbay = async () => {
+    setSyncing(true)
+    try {
+      const response = await fetch("/api/ebay/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ type: "all" }),
+      })
+      const data = await response.json()
+
+      if (data.success) {
+        // Refresh sync status
+        const statusResponse = await fetch("/api/ebay/sync")
+        const statusData = await statusResponse.json()
+        setSyncStatus(statusData)
+      }
+    } catch (error) {
+      console.error("Failed to sync eBay:", error)
+    } finally {
+      setSyncing(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       <div>
@@ -93,6 +208,11 @@ export default function SettingsPage() {
           Manage your account and preferences.
         </p>
       </div>
+
+      {/* eBay OAuth callback alerts - wrapped in Suspense for useSearchParams */}
+      <Suspense fallback={null}>
+        <EbayCallbackAlerts />
+      </Suspense>
 
       <div className="grid gap-6">
         <Card>
@@ -118,6 +238,111 @@ export default function SettingsPage() {
                 {session?.user?.role || "USER"}
               </Badge>
             </div>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Link2 className="h-5 w-5" />
+              eBay Integration
+            </CardTitle>
+            <CardDescription>Connect your eBay seller account to sync sales data automatically</CardDescription>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {loadingEbay ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+              </div>
+            ) : !ebayStatus?.configured ? (
+              <Alert>
+                <AlertDescription>
+                  eBay API is not configured. Add <code className="bg-muted px-1 rounded">EBAY_CLIENT_ID</code> and{" "}
+                  <code className="bg-muted px-1 rounded">EBAY_CLIENT_SECRET</code> to your environment variables.
+                </AlertDescription>
+              </Alert>
+            ) : ebayStatus?.connected ? (
+              <>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <p className="font-medium">eBay Account</p>
+                      <Badge className="bg-green-100 text-green-800">Connected</Badge>
+                    </div>
+                    <p className="text-sm text-muted-foreground">
+                      {ebayStatus.username || "Connected"} · Connected{" "}
+                      {ebayStatus.connectedAt
+                        ? new Date(ebayStatus.connectedAt).toLocaleDateString()
+                        : ""}
+                    </p>
+                  </div>
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      onClick={syncEbay}
+                      disabled={syncing}
+                    >
+                      {syncing ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Syncing...
+                        </>
+                      ) : (
+                        <>
+                          <RefreshCw className="mr-2 h-4 w-4" />
+                          Sync Now
+                        </>
+                      )}
+                    </Button>
+                    <Button
+                      variant="destructive"
+                      onClick={disconnectEbay}
+                      disabled={disconnecting}
+                    >
+                      {disconnecting ? "..." : "Disconnect"}
+                    </Button>
+                  </div>
+                </div>
+
+                {syncStatus && (
+                  <>
+                    <Separator />
+                    <div className="grid grid-cols-3 gap-4 text-center">
+                      <div>
+                        <p className="text-2xl font-bold">{syncStatus.salesCount}</p>
+                        <p className="text-sm text-muted-foreground">Orders</p>
+                      </div>
+                      <div>
+                        <p className="text-2xl font-bold">{syncStatus.listingsCount}</p>
+                        <p className="text-sm text-muted-foreground">Listings</p>
+                      </div>
+                      <div>
+                        <p className="text-2xl font-bold">{syncStatus.payoutsCount}</p>
+                        <p className="text-sm text-muted-foreground">Payouts</p>
+                      </div>
+                    </div>
+                    {syncStatus.lastSync && (
+                      <p className="text-xs text-muted-foreground text-center">
+                        Last synced: {new Date(syncStatus.lastSync).toLocaleString()}
+                      </p>
+                    )}
+                  </>
+                )}
+              </>
+            ) : (
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-medium">eBay Account</p>
+                  <p className="text-sm text-muted-foreground">
+                    Connect your eBay seller account to import orders, listings, and payouts automatically.
+                  </p>
+                </div>
+                <Button onClick={connectEbay}>
+                  <Link2 className="mr-2 h-4 w-4" />
+                  Connect eBay
+                </Button>
+              </div>
+            )}
           </CardContent>
         </Card>
 
@@ -275,31 +500,6 @@ export default function SettingsPage() {
                 </div>
               )}
             </div>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Link2 className="h-5 w-5" />
-              eBay Integration
-            </CardTitle>
-            <CardDescription>Connect your eBay seller account</CardDescription>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="font-medium">eBay Account</p>
-                <p className="text-sm text-muted-foreground">
-                  {session?.user ? "Not connected" : "Loading..."}
-                </p>
-              </div>
-              <Button disabled>Connect eBay</Button>
-            </div>
-            <p className="text-xs text-muted-foreground">
-              eBay integration will be available in Phase 3. This will allow you to sync your
-              active listings and sales data automatically.
-            </p>
           </CardContent>
         </Card>
 

@@ -25,16 +25,21 @@ model User {
   sales         Sale[]
   listings      Listing[]
   notifications Notification[]
+  ebaySales     EbaySale[]
+  ebayListings  EbayListing[]
+  ebayPayouts   EbayPayout[]
 
   // Invite codes
   createdInvites InviteCode[] @relation("CreatedInvites")
   usedInvite     InviteCode?  @relation("UsedInvite")
 
   // eBay Auth
-  ebayUserId    String?
-  ebayToken     String?
-  ebayRefreshToken String?
-  ebayTokenExpiry DateTime?
+  ebayUserId       String?
+  ebayUsername     String?
+  ebayToken        String?   @db.Text
+  ebayRefreshToken String?   @db.Text
+  ebayTokenExpiry  DateTime?
+  ebayConnectedAt  DateTime?
 }
 
 model Item {
@@ -107,6 +112,135 @@ model Listing {
   @@index([userId])
   @@index([itemId])
   @@index([status])
+}
+
+// eBay Sales from API - stores complete order data
+model EbaySale {
+  id              String   @id @default(cuid())
+
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+
+  // eBay identifiers
+  orderId         String   @unique
+  legacyOrderId   String?
+
+  // Buyer info
+  buyerUsername   String?
+
+  // Item details
+  itemId          String?  // eBay item ID
+  title           String
+  sku             String?
+  quantity        Int      @default(1)
+
+  // Pricing from eBay
+  itemPrice       Float    // What item sold for
+  shippingCost    Float    @default(0) // Shipping charged to buyer
+  salesTax        Float    @default(0)
+  ebayFees        Float    @default(0) // Final value fee + payment processing
+  totalAmount     Float    // Total collected
+
+  // User-entered costs (not from eBay)
+  productCost     Float?   // What user paid for item
+  shippingMaterialsCost Float? // Boxes, tape, etc.
+  actualShippingCost Float?   // If different from eBay label
+  otherCosts      Float?   // Mileage, etc.
+  costNotes       String?  // Notes about costs
+
+  // Calculated
+  netProfit       Float?   // Calculated after user enters costs
+
+  // Dates
+  orderDate       DateTime
+  paidDate        DateTime?
+  shippedDate     DateTime?
+
+  // Status
+  orderStatus     String   // PENDING, PAID, SHIPPED, DELIVERED, CANCELLED
+
+  // Shipping
+  trackingNumber  String?
+  shippingCarrier String?
+
+  // Raw data backup
+  rawOrderData    String?  @db.Text // JSON of full order from eBay
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([orderDate])
+  @@index([orderStatus])
+}
+
+// eBay Active Listings from API
+model EbayListing {
+  id              String   @id @default(cuid())
+
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+
+  // eBay identifiers
+  listingId       String   @unique // eBay listing/item ID
+
+  // Listing details
+  title           String
+  sku             String?
+
+  // Pricing
+  currentPrice    Float
+  originalPrice   Float?
+
+  // Quantity
+  quantityAvailable Int     @default(1)
+  quantitySold      Int     @default(0)
+
+  // Performance
+  viewCount       Int?
+  watchCount      Int?
+
+  // Dates
+  startDate       DateTime
+  endDate         DateTime?
+
+  // Status
+  status          String   @default("ACTIVE") // ACTIVE, ENDED, SOLD
+
+  // Images
+  imageUrl        String?
+  ebayUrl         String?
+
+  // User costs for this item
+  productCost     Float?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([userId])
+  @@index([status])
+}
+
+// eBay Payouts/Transactions
+model EbayPayout {
+  id              String   @id @default(cuid())
+
+  userId          String
+  user            User     @relation(fields: [userId], references: [id])
+
+  payoutId        String   @unique
+
+  amount          Float
+  payoutDate      DateTime
+  payoutStatus    String   // PENDING, COMPLETED, FAILED
+
+  // Bank info (masked)
+  bankAccountLast4 String?
+
+  createdAt       DateTime @default(now())
+
+  @@index([userId])
+  @@index([payoutDate])
 }
 
 model CompetitorPrice {
