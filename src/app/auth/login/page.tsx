@@ -1,8 +1,8 @@
 "use client"
 
 import { Suspense } from "react"
-import { useState, useEffect } from "react"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useState, useEffect, useRef } from "react"
+import { useSearchParams } from "next/navigation"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
@@ -10,67 +10,25 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/com
 import { Alert, AlertDescription } from "@/components/ui/alert"
 
 function LoginForm() {
-  const router = useRouter()
   const searchParams = useSearchParams()
   const callbackUrl = searchParams.get("callbackUrl") || "/dashboard"
+  const errorParam = searchParams.get("error")
 
-  const [email, setEmail] = useState("")
-  const [password, setPassword] = useState("")
-  const [error, setError] = useState("")
-  const [loading, setLoading] = useState(false)
   const [csrfToken, setCsrfToken] = useState("")
+  const [loading, setLoading] = useState(false)
+  const formRef = useRef<HTMLFormElement>(null)
 
   // Fetch CSRF token on mount
   useEffect(() => {
-    fetch("/api/auth/csrf")
+    fetch("/api/auth/csrf", { credentials: "include" })
       .then((res) => res.json())
       .then((data) => setCsrfToken(data.csrfToken))
       .catch(console.error)
   }, [])
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
+  const handleSubmit = () => {
     setLoading(true)
-
-    try {
-      // Use fetch directly instead of signIn
-      const res = await fetch("/api/auth/callback/credentials", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams({
-          email,
-          password,
-          csrfToken,
-          callbackUrl,
-          json: "true",
-        }),
-        redirect: "manual",
-      })
-
-      // Check if login was successful
-      if (res.type === "opaqueredirect" || res.status === 302 || res.status === 200) {
-        // Check the session to see if we're logged in
-        const sessionRes = await fetch("/api/auth/session")
-        const session = await sessionRes.json()
-
-        if (session?.user) {
-          router.push(callbackUrl)
-          router.refresh()
-          return
-        }
-      }
-
-      // If we get here, login failed
-      setError("Invalid email or password")
-      setLoading(false)
-    } catch (err) {
-      console.error("Login error:", err)
-      setError("An error occurred during login")
-      setLoading(false)
-    }
+    // Form will submit natively
   }
 
   return (
@@ -84,21 +42,35 @@ function LoginForm() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
+        {/* Native form submission to NextAuth */}
+        <form
+          ref={formRef}
+          method="POST"
+          action="/api/auth/callback/credentials"
+          onSubmit={handleSubmit}
+          className="space-y-4"
+        >
+          {errorParam && (
             <Alert variant="destructive">
-              <AlertDescription>{error}</AlertDescription>
+              <AlertDescription>
+                {errorParam === "CredentialsSignin"
+                  ? "Invalid email or password"
+                  : "An error occurred during login"}
+              </AlertDescription>
             </Alert>
           )}
+
+          {/* Hidden fields for NextAuth */}
+          <input type="hidden" name="csrfToken" value={csrfToken} />
+          <input type="hidden" name="callbackUrl" value={callbackUrl} />
 
           <div className="space-y-2">
             <Label htmlFor="email">Email</Label>
             <Input
               id="email"
+              name="email"
               type="email"
               placeholder="you@example.com"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
               required
             />
           </div>
@@ -107,9 +79,8 @@ function LoginForm() {
             <Label htmlFor="password">Password</Label>
             <Input
               id="password"
+              name="password"
               type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
               required
             />
           </div>
