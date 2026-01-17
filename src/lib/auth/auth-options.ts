@@ -2,8 +2,12 @@ import type { NextAuthConfig } from "next-auth"
 import Credentials from "next-auth/providers/credentials"
 import bcrypt from "bcryptjs"
 import { prisma } from "@/lib/db/prisma"
+import { authConfig } from "./auth.config"
 
-export const authConfig: NextAuthConfig = {
+// Full auth config with Credentials provider
+// This extends the Edge-compatible config with the provider
+export const fullAuthConfig: NextAuthConfig = {
+  ...authConfig,
   providers: [
     Credentials({
       name: "credentials",
@@ -45,45 +49,5 @@ export const authConfig: NextAuthConfig = {
       },
     }),
   ],
-  callbacks: {
-    async jwt({ token, user, trigger, session }) {
-      if (user) {
-        token.id = user.id
-        token.email = user.email as string
-        token.role = user.role
-        token.twoFactorEnabled = user.twoFactorEnabled
-        token.twoFactorVerified = !user.twoFactorEnabled
-      }
-
-      if (trigger === "update" && session) {
-        token.twoFactorVerified = session.twoFactorVerified
-        if (session.twoFactorEnabled !== undefined) {
-          token.twoFactorEnabled = session.twoFactorEnabled
-        }
-      }
-
-      return token
-    },
-    async session({ session, token }) {
-      if (token) {
-        session.user.id = token.id
-        session.user.email = token.email
-        session.user.role = token.role
-        session.user.twoFactorEnabled = token.twoFactorEnabled
-        session.user.twoFactorVerified = token.twoFactorVerified
-      }
-      return session
-    },
-  },
-  pages: {
-    signIn: "/auth/login",
-    error: "/auth/error",
-  },
-  session: {
-    strategy: "jwt",
-    maxAge: 30 * 24 * 60 * 60, // 30 days
-  },
-  trustHost: true,
   debug: process.env.NODE_ENV === "development",
-  secret: process.env.AUTH_SECRET || process.env.NEXTAUTH_SECRET,
 }
