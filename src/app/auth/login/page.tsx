@@ -36,27 +36,39 @@ function LoginForm() {
         redirect: false,
       })
 
-      if (result?.error) {
+      if (!result) {
+        setError("An error occurred during login")
+        setLoading(false)
+        return
+      }
+
+      if (result.error) {
         setError("Invalid email or password")
         setLoading(false)
         return
       }
 
-      if (result?.ok) {
-        const sessionRes = await fetch("/api/auth/session")
-        const session = await sessionRes.json()
-
-        if (session?.user?.twoFactorEnabled && !session?.user?.twoFactorVerified) {
-          setNeeds2FA(true)
-          setUserId(session.user.id)
-          setLoading(false)
-          return
-        }
-
-        router.push(callbackUrl)
-        router.refresh()
+      if (!result.ok) {
+        setError("Login failed. Please try again.")
+        setLoading(false)
+        return
       }
-    } catch {
+
+      // Login successful - check for 2FA
+      const sessionRes = await fetch("/api/auth/session")
+      const session = await sessionRes.json()
+
+      if (session?.user?.twoFactorEnabled && !session?.user?.twoFactorVerified) {
+        setNeeds2FA(true)
+        setUserId(session.user.id)
+        setLoading(false)
+        return
+      }
+
+      router.push(callbackUrl)
+      router.refresh()
+    } catch (err) {
+      console.error("Login error:", err)
       setError("An error occurred during login")
       setLoading(false)
     }
